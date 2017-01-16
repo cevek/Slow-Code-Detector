@@ -3,6 +3,10 @@ body {
     font-size: 12px;
 }
 
+.hidden {
+    display: none;
+}
+
 .file-item {
 }
 
@@ -34,17 +38,18 @@ body {
 }
 
 .recompile {
-    border-top: 1px solid silver;
+    border-top: 1px solid #EEE;
 }
 .recompile:first-child {
     border-top: 0;
 }
 .code {
-    border: 1px solid silver;
-    padding: 5px;
+    border: 1px solid #EEE;
+    padding: 10px;
     font-size: 12px;
     font-family: Consolas, Menlo, Courier, monospace;;
     white-space: pre;
+    border-radius: 3px;
 }
 
 .runtime {
@@ -68,5 +73,31 @@ body {
 
 .inline {
     background: #a1d6fa;
+}
+
+.inline-code .code {
+    border-color: #a1d6fa;
+    margin-top: -2px;
+}
+
+.recompile-title{
+}
+
+.toggle-next{
     cursor: pointer;
+}
+
+[data-title]:hover {
+    position: relative;
+}
+[data-title]:hover:after {
+    content: attr(data-title);
+    padding: 1px 3px;
+    color: #333;
+    position: absolute;
+    background: white;
+    border: 1px solid #EEE;
+    border-radius: 3px;
+    left: 0;
+    top: -20px;
 }

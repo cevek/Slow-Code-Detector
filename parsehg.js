@@ -75,7 +75,7 @@ function parseCode(code, files) {
             var r = fnIR.match(d);
 
             if (r[4] !== '0') {
-                fnId = {parent: r[3], subId: r[4], name: r[2], inlines: []};
+                fnId = {parent: r[3], subId: r[4], name: r[2], runtime: [], code: r[5], inlines: []};
                 let superFnId = files.get(r[1])[fnIdSymbol].get(r[3]);
                 let subMap = superFnId[subSymbol];
                 subMap.set(r[4], fnId);
@@ -144,13 +144,13 @@ function escape(string) {
 }
 
 function makeHTML(files) {
-    var html = `<meta charset="UTF-8"><link rel="stylesheet" href="style.css">`;
+    var html = `<meta charset="UTF-8"><link rel="stylesheet" href="style.css"><script src="script.js"></script>`;
     for (var fileName in files) {
-        html += `<div class="file-item"><div class="file-name">${escape(fileName)}</div><div class="fn-names">`;
+        html += `<div class="file-item"><div class="file-name toggle-next">${escape(fileName)}</div><div class="fn-names">`;
         var file = files[fileName];
         for (var fnName in file) {
             var fn = file[fnName];
-            html += `<div class="fn-item ${fn.deopt ? 'fn-deopt' : ''}"><div class="fn-name">${escape(fnName)}:</div><div class="fn-versions">`;
+            html += `<div class="fn-item ${fn.deopt ? 'fn-deopt' : ''}"><div class="fn-name toggle-next">${escape(fnName)}:</div><div class="fn-versions">`;
             html += makeVersions(fn);
             html += `</div></div>`;
         }
@@ -166,8 +166,9 @@ function makeVersions(fn) {
         var version = versions[i];
         html += `<div class="recompile">`;
         if (versions.length > 1) {
-            html += `Recompile`;
+            html += `<span class="recompile-title toggle-next">~recompile~</span>`;
         }
+        html += `<div class="${versions.length - 1 === i ? '' : 'hidden'}">${highlight(versions[versions.length - 1])}</div>`;
         var deopts = version.deopts;
         if (deopts.length) {
             for (let j = 0; j < deopts.length; j++) {
@@ -178,7 +179,6 @@ function makeVersions(fn) {
         html += `</div>`;
     }
 
-    html += `<div class="code">${highlight(versions[versions.length - 1])}</div>`;
     return html;
 }
 
@@ -190,8 +190,7 @@ var runtimeType = {
     'CompareGeneric': 'Ⓖ'
 };
 
-function highlight(version) {
-
+function highlight(version, hidden) {
     var replaces = [];
     var code = version.code;
 
@@ -205,7 +204,12 @@ function highlight(version) {
         var pos = +inlineFn.pos;
         var end = findEnd(code, pos);
         var sub = code.substring(pos, end);
-        replaces.push({start: pos, end: end, text: `<span title="Inline call" class="inline">${sub}</span>`});
+        var spaces = getSpaceSymbolsBeforePrevNewLineOfPos(code, end);
+        replaces.push({
+            start: pos,
+            end: end,
+            text: `<span class="inline toggle-next">${sub}</span><span class="inline-code hidden">${highlight(inlineFn)}${spaces}</span>`
+        });
     }
 
     for (var i = 0; i < version.runtime.length; i++) {
@@ -214,10 +218,20 @@ function highlight(version) {
         var end = findEnd(code, pos);
         var oldCode = (code.substring(pos, end));
         var prefix = ''//runtimeType[runtime.text] || '';
-        var replacedCode = `<span class="runtime ${runtime.text}" title="${runtime.text}">${prefix}${oldCode}</span>`;
+        var replacedCode = `<span class="runtime ${runtime.text}" data-title="${runtime.text}">${prefix}${oldCode}</span>`;
         replaces.push({start: pos, end: end, text: replacedCode})
     }
-    return replaceCode(code, replaces);
+    return `<div class="code">${replaceCode(code, replaces)}</div>`;
+}
+
+function getSpaceSymbolsBeforePrevNewLineOfPos(code, pos) {
+    var s = '';
+    for (var i = pos - 1; i >= 0; i--) {
+        if (code[i] === '\n') {
+            return s;
+        }
+        s += ' ';
+    }
 }
 
 function sortStart(a, b) {
