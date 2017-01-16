@@ -48,7 +48,8 @@ body {
 }
 
 .runtime {
-    background: lightgoldenrodyellow
+    background: lightgoldenrodyellow;
+    cursor: default;
 }
 
 .LoadNamedGeneric, .StoreNamedGeneric, .LoadKeyedGeneric, .StoreKeyedGeneric, .CompareGeneric{
@@ -63,4 +64,9 @@ body {
 
 .CallWithDescriptor, .InvokeFunction, .CallRuntime{
     background: silver;
+}
+
+.inline {
+    background: #a1d6fa;
+    cursor: pointer;
 }

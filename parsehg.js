@@ -101,7 +101,7 @@ function parseCode(code, files) {
                 }
                 var fnName = file.get(r[2]);
                 if (!fnName) {
-                    fnName = {deopt: false, versions: []};
+                    fnName = {name: r[2], deopt: false, versions: []};
                     fnName[versionsSymbol] = new Map();
                     file.set(r[2], fnName);
                     // throw new Error('No fnName: ' + r[2]);
@@ -115,6 +115,7 @@ function parseCode(code, files) {
                 fnName.versions.push(fnId);
             }
             fnId[subSymbol] = new Map();
+            fnId.name = r[2];
             fnId.id = r[3];
             fnId.inlines = [];
             fnId.deopts = [];
@@ -150,7 +151,7 @@ function makeHTML(files) {
         for (var fnName in file) {
             var fn = file[fnName];
             html += `<div class="fn-item ${fn.deopt ? 'fn-deopt' : ''}"><div class="fn-name">${escape(fnName)}:</div><div class="fn-versions">`;
-            html += makeVersions(fn.versions);
+            html += makeVersions(fn);
             html += `</div></div>`;
         }
         html += `</div></div>`;
@@ -158,8 +159,9 @@ function makeHTML(files) {
     fs.writeFileSync('ir.html', html)
 }
 
-function makeVersions(versions) {
+function makeVersions(fn) {
     var html = '';
+    var versions = fn.versions;
     for (var i = 0; i < versions.length; i++) {
         var version = versions[i];
         html += `<div class="recompile">`;
@@ -180,21 +182,61 @@ function makeVersions(versions) {
     return html;
 }
 
+var runtimeType = {
+    'LoadNamedGeneric': 'Ⓖ',
+    'StoreNamedGeneric': 'Ⓖ',
+    'LoadKeyedGeneric': 'Ⓖ',
+    'StoreKeyedGeneric': 'Ⓖ',
+    'CompareGeneric': 'Ⓖ'
+};
+
 function highlight(version) {
+
+    var replaces = [];
     var code = version.code;
-    var shift = 0;
-    var prevEnd = -1;
+
+    for (var i = 0; i < code.length; i++) {
+        if (code[i] === '<') replaces.push({start: i, end: i + 1, text: '&lt;'});
+        else if (code[i] === '>') replaces.push({start: i, end: i + 1, text: '&gt;'});
+    }
+
+    for (var i = 0; i < version.inlines.length; i++) {
+        var inlineFn = version.inlines[i];
+        var pos = +inlineFn.pos;
+        var end = findEnd(code, pos);
+        var sub = code.substring(pos, end);
+        replaces.push({start: pos, end: end, text: `<span title="Inline call" class="inline">${sub}</span>`});
+    }
+
     for (var i = 0; i < version.runtime.length; i++) {
         var runtime = version.runtime[i];
-        var pos = +runtime.pos + shift;
+        var pos = +runtime.pos;
         var end = findEnd(code, pos);
+        var oldCode = (code.substring(pos, end));
+        var prefix = ''//runtimeType[runtime.text] || '';
+        var replacedCode = `<span class="runtime ${runtime.text}" title="${runtime.text}">${prefix}${oldCode}</span>`;
+        replaces.push({start: pos, end: end, text: replacedCode})
+    }
+    return replaceCode(code, replaces);
+}
+
+function sortStart(a, b) {
+    return a.start < b.start ? -1 : 1;
+}
+function replaceCode(code, replaces) {
+    replaces.sort(sortStart);
+    var shift = 0;
+    var prevEnd = -1;
+    for (var i = 0; i < replaces.length; i++) {
+        var replace = replaces[i];
+        var pos = replace.start + shift;
+        var end = replace.end + shift;
         if (prevEnd > pos) {
             continue;
         }
-        var oldCode = (code.substring(pos, end));
-        var replacedCode = `<span class="runtime ${runtime.text}" title="${runtime.text}">${oldCode}</span>`;
+        var replacedCode = replace.text;
         code = code.substr(0, pos) + replacedCode + code.substr(end);
-        var diff = replacedCode.length - oldCode.length;
+        var diff = replacedCode.length - (end - pos);
         shift += diff;
         prevEnd = end + diff;
     }
@@ -204,7 +246,7 @@ function highlight(version) {
 function findEnd(code, start) {
     new RegExp(`(.|\n){${start}}(\w+)`)
     var sub = code.substr(start, 100);
-    var m = sub.match(/^(new |[.=[ !&<>\^%+\-]*)?[\w\d_]+]?/);
+    var m = sub.match(/^(new |[.=[ !&<>\^%+\-|]*)?[\w\d_]+]?/);
     if (m) {
         return start + m[0].length;
     }
