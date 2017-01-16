@@ -1,8 +1,6 @@
-//node --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to=code.asm --trace_hydrogen_file=hg.cfg runner.js
+var childProc = require('child_process');
 var fs = require('fs');
-var s = fs.readFileSync('hg.cfg', 'utf8');
-var code = fs.readFileSync('code.asm', 'utf8');
-var data = [];
+var command = process.argv.slice(2);
 
 class Map {
     get(k) {
@@ -13,6 +11,17 @@ class Map {
         return this[k] = v;
     }
 }
+
+
+function parseFiles() {
+    var s = fs.readFileSync('hg.cfg', 'utf8');
+    var code = fs.readFileSync('code.asm', 'utf8');
+    var files = new Map();
+    parseCode(code, files);
+    parseIR(s, files);
+    makeHTML(files);
+}
+
 
 var fnIdSymbol = Symbol('fnId');
 var subSymbol = Symbol('sub');
@@ -126,45 +135,15 @@ function parseCode(code, files) {
 
 }
 
-var files = new Map();
-parseCode(code, files);
-parseIR(s, files);
-// console.log(JSON.stringify(files, null, 2));
 
-// console.log(JSON.stringify(files, null, 2));
-// s.match(d);
-// while (r = d.exec(s)) {
-//     console.log(r[1]);
-//     /*while (r2 = /LoadNamedGeneric (.*?) /g.exec(r[2])) {
-//         console.log('  ' + r2[1]);
-//     }*/
-// }
-
-
-
-function escape (string) {
+function escape(string) {
     return string
         .replace(/>/g, '&gt;')
         .replace(/</g, '&lt;')
 }
 
 function makeHTML(files) {
-    var html = `
-<style>
-body{font-family: Verdana; font-size: 12px;}
-.file-item{}
-.file-name{}
-.file-name{}
-.fn-names{}
-.fn-item{margin: 10px;}
-.fn-deopt{color: #ce1800;}
-.fn-name{}
-.fn-versions{}
-.deopt{color: #ce1800; border-top: 1px solid silver;}
-.code{border: 1px solid silver; padding: 5px; font-size: 12px; font-family: Consolas, Menlo, Courier, monospace;; white-space: pre;}
-.runtime{background: lightgoldenrodyellow}
-</style>
-`;
+    var html = `<meta charset="UTF-8"><link rel="stylesheet" href="style.css">`;
     for (var fileName in files) {
         html += `<div class="file-item"><div class="file-name">${escape(fileName)}</div><div class="fn-names">`;
         var file = files[fileName];
@@ -181,39 +160,43 @@ body{font-family: Verdana; font-size: 12px;}
 
 function makeVersions(versions) {
     var html = '';
-     for (var i = 0; i < versions.length; i++) {
-         var version = versions[i];
-         if (i == versions.length - 1) {
-             html += `<div class="code">${highlight(escape(version.code), version)}</div>`;
-         }
-         if (version.deopts.length) {
-             var deopts = version.deopts;
-             for (let j = 0; j < deopts.length; j++) {
-                 var deopt = deopts[j];
-                 html += `<div class="deopt">Deopt: ${escape(deopt)}</div>`;
-             }
-         }
-     }
+    for (var i = 0; i < versions.length; i++) {
+        var version = versions[i];
+        html += `<div class="recompile">`;
+        if (versions.length > 1) {
+            html += `Recompile`;
+        }
+        var deopts = version.deopts;
+        if (deopts.length) {
+            for (let j = 0; j < deopts.length; j++) {
+                var deopt = deopts[j];
+                html += `<div class="deopt">Deopt: ${escape(deopt)}</div>`;
+            }
+        }
+        html += `</div>`;
+    }
 
+    html += `<div class="code">${highlight(versions[versions.length - 1])}</div>`;
     return html;
 }
 
-function highlight(code, version) {
+function highlight(version) {
+    var code = version.code;
     var shift = 0;
     var prevEnd = -1;
-    for (let i = 0; i < version.runtime.length; i++) {
-        const runtime = version.runtime[i];
+    for (var i = 0; i < version.runtime.length; i++) {
+        var runtime = version.runtime[i];
         var pos = +runtime.pos + shift;
         var end = findEnd(code, pos);
-        if (prevEnd >= pos) {
+        if (prevEnd > pos) {
             continue;
         }
-        var oldCode = code.substring(pos, end);
-        var replacedCode = `<span class="runtime" title="${runtime.text.replace(/"/g, '&quot;')}">${oldCode}</span>`;
-        // var replacedCode = `"${oldCode}"`;
+        var oldCode = (code.substring(pos, end));
+        var replacedCode = `<span class="runtime ${runtime.text}" title="${runtime.text}">${oldCode}</span>`;
         code = code.substr(0, pos) + replacedCode + code.substr(end);
-        shift += replacedCode.length - oldCode.length;
-        prevEnd = end;
+        var diff = replacedCode.length - oldCode.length;
+        shift += diff;
+        prevEnd = end + diff;
     }
     return code;
 }
@@ -221,11 +204,24 @@ function highlight(code, version) {
 function findEnd(code, start) {
     new RegExp(`(.|\n){${start}}(\w+)`)
     var sub = code.substr(start, 100);
-    var m = sub.match(/^[.=[ ]*[\w\d_]+/);
+    var m = sub.match(/^(new |[.=[ !&<>\^%+\-]*)?[\w\d_]+]?/);
     if (m) {
         return start + m[0].length;
     }
     return start + 5;
 }
 
-makeHTML(files);
+if (command.indexOf('--onlyparse') > -1) {
+    parseFiles();
+} else {
+    childProc.exec('node --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to=code.asm --trace_hydrogen_file=hg.cfg ' + command.join(' '), {
+        maxBuffer: 10 * 1000 * 1000,
+    }, (err, stdout, stderr) => {
+        if (err) {
+            throw err;
+        }
+        console.log(stdout);
+        console.log(stderr);
+        parseFiles();
+    });
+}

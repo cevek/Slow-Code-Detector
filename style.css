@@ -1,0 +1,66 @@
+body {
+    font-family: Verdana;
+    font-size: 12px;
+}
+
+.file-item {
+}
+
+.file-name {
+}
+
+.file-name {
+}
+
+.fn-names {
+}
+
+.fn-item {
+    margin: 20px 10px;
+}
+
+.fn-deopt {
+    color: #ce1800;
+}
+
+.fn-name {
+}
+
+.fn-versions {
+}
+
+.deopt {
+    color: #ce1800;
+}
+
+.recompile {
+    border-top: 1px solid silver;
+}
+.recompile:first-child {
+    border-top: 0;
+}
+.code {
+    border: 1px solid silver;
+    padding: 5px;
+    font-size: 12px;
+    font-family: Consolas, Menlo, Courier, monospace;;
+    white-space: pre;
+}
+
+.runtime {
+    background: lightgoldenrodyellow
+}
+
+.LoadNamedGeneric, .StoreNamedGeneric, .LoadKeyedGeneric, .StoreKeyedGeneric, .CompareGeneric{
+    background: lightpink;
+}
+
+.LoadNamedGeneric:before, .StoreNamedGeneric:before, .LoadKeyedGeneric:before, .StoreKeyedGeneric:before, .CompareGeneric:before{
+    /*content: 'Ⓖ';*/
+    /*font-size: 10px;*/
+    /*padding-left: 3px;*/
+}
+
+.CallWithDescriptor, .InvokeFunction, .CallRuntime{
+    background: silver;
+}
