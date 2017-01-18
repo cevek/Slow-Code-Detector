@@ -1,5 +1,5 @@
 {
-  "name": "v8-IR-analyzer",
+  "name": "v8-ir-analyzer",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -9,6 +9,7 @@
   "bin": {
     "v8-ir": "bin/run.js"
   },
+  "repository": "https://github.com/cevek/v8_IR_Analizer",
   "keywords": [],
   "author": "cevek",
   "license": "ISC",
