@@ -5,6 +5,7 @@
         "noImplicitAny": true,
         "sourceMap": false,
         "noImplicitThis": true,
+        "declaration": true,
         "noImplicitReturns": true
     }
 }

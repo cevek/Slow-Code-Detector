@@ -235,7 +235,8 @@ namespace irParser {
         }
 
         makeHTML() {
-            let html = `<meta charset="UTF-8"><link rel="stylesheet" href="style.css"><script src="script.js"></script>`;
+            const css = fs.readFileSync('style.css', 'utf8');
+            let html = `<meta charset="UTF-8"><style>${css}</style><link rel="stylesheet" href="_style.css"><script src="script.js"></script>`;
             for (const [, file] of this.files) {
                 html += `<div class="file-item"><div class="file-name toggle-next">${this.escape(file.fullname)}</div><div class="fn-names">`;
                 for (const [, fun] of file.funMap) {
@@ -247,7 +248,7 @@ namespace irParser {
         }
 
         funHTML(fun: Fun) {
-            let html = `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><div class="fn-name toggle-next"><a href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)}</a>:</div><div class="fn-versions">`;
+            let html = `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)}:</a><div class="fn-versions">`;
             const versions = fun.versions;
             for (let i = 0; i < versions.length; i++) {
                 const version = versions[i];
@@ -287,7 +288,7 @@ namespace irParser {
                 replaces.push({
                     start: pos,
                     end: end,
-                    text: `<span class="inline toggle-next">${sub}</span><span class="inline-code hidden">${this.funIDHTML(inlineFunID, false)}${spaces}</span>`
+                    text: `<span class="inline toggle-next" data-title="Show inlined">${sub}</span><span class="inline-code hidden">${this.funIDHTML(inlineFunID, false)}${spaces}</span>`
                 });
             }
 
@@ -297,11 +298,12 @@ namespace irParser {
                 const end = this.findEnd(code, pos);
                 let oldCode = (code.substring(pos, end));
                 const prefix = '';//runtimeType[runtime.text] || '';
-                let replacedCode = `<span class="runtime ${runtime.type}" data-title="${runtime.type}">${prefix}${oldCode}</span>`;
-                if (runtime.type === 'InvokeFunction' || runtime.type === 'CallWithDescriptor') {
+                const type = (runtime.type === 'InvokeFunction' || runtime.type === 'CallRuntime') ? 'CallWithDescriptor' : runtime.type;
+                let replacedCode = `<span class="runtime ${type}" data-title="${type}">${prefix}${oldCode}</span>`;
+                if (type === 'CallWithDescriptor') {
                     const linkedFun = this.funMap.get(oldCode);
                     if (linkedFun) {
-                        replacedCode = `<a class="runtime ${runtime.type}" ${linkedFun.didNotInlineReason ? `did-not-inlined data-title="${linkedFun.didNotInlineReason}"` : ''} href="#${oldCode}">${oldCode}</a>`;
+                        replacedCode = `<a class="runtime ${type}" ${linkedFun.didNotInlineReason ? `did-not-inlined data-title="Did not inline: ${linkedFun.didNotInlineReason}"` : ''} href="#${oldCode}">${oldCode}</a>`;
                     }
                 }
                 replaces.push({start: pos, end: end, text: replacedCode});
@@ -355,7 +357,6 @@ namespace irParser {
             return start + 5;
         }
     }
-
 
     const program = new Program();
     program.run();
