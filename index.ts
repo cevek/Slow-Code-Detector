@@ -1,6 +1,7 @@
 const childProc = require('child_process');
 const fs = require('fs');
 const command = process.argv.slice(2);
+const path = require('path');
 
 namespace irParser {
 
@@ -50,37 +51,54 @@ namespace irParser {
     class Program {
         files = new Map<string, File>();
         funMap = new Map<string, Fun>();
-        isMarkdown = true;
+        isMarkdown = false;
+        cwd = process.cwd() + '/';
+        hydrogenCfg = this.cwd + 'hydrogen.cfg';
+        codeAsm = this.cwd + 'code.asm';
+        outTxt = this.cwd + 'out.txt';
+        irHtml = this.cwd + 'ir.html';
+        irMD = this.cwd + 'ir.md';
 
         run() {
-            if (command.indexOf('--onlyparse') > -1) {
+            let pos: number;
+            if ((pos = command.indexOf('--md')) > -1) {
+                this.isMarkdown = true;
+                command.splice(pos, 1);
+            }
+            if ((pos = command.indexOf('--onlyparse')) > -1) {
+                command.splice(pos, 1);
                 program.parseFiles();
+                this.make();
             } else {
-                childProc.exec('node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to=code.asm --trace_hydrogen_file=hg.cfg ' + command.join(' '), {
+                childProc.exec(`node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to="${this.codeAsm}" --trace_hydrogen_file="${this.hydrogenCfg}" ${command.join(' ')}`, {
                     maxBuffer: 10 * 1000 * 1000,
                 }, (err: Buffer, stdout: Buffer, stderr: Buffer) => {
                     if (err) {
                         throw err;
                     }
                     const out = stdout.toString() + stderr.toString();
-                    fs.writeFileSync('out.txt', out);
+                    fs.writeFileSync(this.outTxt, out);
                     program.parseFiles();
+                    this.make();
                 });
             }
         }
 
         parseFiles() {
-            const s = fs.readFileSync('hg.cfg', 'utf8');
-            const code = fs.readFileSync('code.asm', 'utf8');
-            const out = fs.readFileSync('out.txt', 'utf8');
+            let s: string;
+            let code: string;
+            let out: string;
+            try {
+                s = fs.readFileSync(this.hydrogenCfg, 'utf8');
+                code = fs.readFileSync(this.codeAsm, 'utf8');
+                out = fs.readFileSync(this.outTxt, 'utf8');
+            } catch (e) {
+                console.error(e.message);
+                return;
+            }
             this.parseCode(code);
             this.parseIR(s);
             this.parseDidNotInlineReasons(out);
-            if (this.isMarkdown) {
-                this.makeMD();
-            } else {
-                this.makeHTML();
-            }
         }
 
         parseIR(s: string) {
@@ -239,9 +257,18 @@ namespace irParser {
                 .replace(/</g, '&lt;');
         }
 
+        make() {
+            if (this.isMarkdown) {
+                this.makeMD();
+            } else {
+                this.makeHTML();
+            }
+        }
+
         makeHTML() {
             const css = fs.readFileSync(__dirname + '/style.css', 'utf8');
-            let html = `<meta charset="UTF-8"><style>${css}</style><link rel="stylesheet" href="_style.css"><script src="script.js"></script>`;
+            const script = fs.readFileSync(__dirname + '/script.js', 'utf8');
+            let html = `<meta charset="UTF-8"><style>${css}</style><script>${script}</script></script>`;
             for (const [, file] of this.files) {
                 html += `<div class="file-item"><div class="file-name toggle-next">${this.escape(file.fullname)}</div><div class="fn-names">`;
                 for (const [, fun] of file.funMap) {
@@ -249,7 +276,8 @@ namespace irParser {
                 }
                 html += `</div></div>`;
             }
-            fs.writeFileSync('ir.html', html);
+            fs.writeFileSync(this.irHtml, html);
+            console.log('Created ' + path.relative(this.cwd, this.irHtml));
         }
 
 
@@ -262,6 +290,7 @@ namespace irParser {
                 }
             }
             fs.writeFileSync('ir.md', out);
+            console.log('Created ' + path.relative(this.cwd, this.irMD));
         }
 
         funHTML(fun: Fun) {
@@ -329,7 +358,7 @@ namespace irParser {
                 else if (code[i] === '>') replaces.push({start: i, end: i + 1, text: '&gt;'});
             }
 
-            const inlinedFunCode:string[] = [];
+            const inlinedFunCode: string[] = [];
 
             for (let i = 0; i < funID.inlines.length; i++) {
                 const inlineFunID = funID.inlines[i];
@@ -340,7 +369,7 @@ namespace irParser {
                 let text = `<span class="inline toggle-next" data-title="Show inlined">${sub}</span><span class="inline-code hidden">${this.funIDHTML(inlineFunID, false)}${spaces}</span>`;
                 if (this.isMarkdown) {
                     inlinedFunCode.push(`<details>\n<summary>${sub}</summary>\n${this.funIDHTML(inlineFunID, false)}\n</details>`);
-                    text = `<b title="Inlined">🔷${sub}</b>`
+                    text = `<b title="Inlined">🔷${sub}</b>`;
                 }
                 replaces.push({
                     start: pos,
@@ -358,14 +387,14 @@ namespace irParser {
                 const type = (runtime.type === 'InvokeFunction' || runtime.type === 'CallRuntime') ? 'CallWithDescriptor' : runtime.type;
                 let replacedCode = `<span class="runtime ${type}" data-title="${type}">${prefix}${oldCode}</span>`;
                 if (this.isMarkdown) {
-                    replacedCode = (type === 'CallWithDescriptor' ? '🔶' : '⚠') + `️<i><b title="${type}">${oldCode}</b></i>`
+                    replacedCode = (type === 'CallWithDescriptor' ? '🔶' : '⚠') + `️<i><b title="${type}">${oldCode}</b></i>`;
                 }
                 if (type === 'CallWithDescriptor') {
                     const linkedFun = this.funMap.get(oldCode);
                     if (linkedFun) {
                         replacedCode = `<a class="runtime ${type}" ${linkedFun.didNotInlineReason ? `did-not-inlined data-title="Did not inline: ${linkedFun.didNotInlineReason}"` : ''} href="#${oldCode}">${oldCode}</a>`;
                         if (this.isMarkdown) {
-                            replacedCode = `🔶<i><b title="Did not inline: ${linkedFun.didNotInlineReason || 'unknown'}">${oldCode}</b></i>`
+                            replacedCode = `🔶<i><b title="Did not inline: ${linkedFun.didNotInlineReason || 'unknown'}">${oldCode}</b></i>`;
                         }
                     }
                 }
@@ -375,13 +404,13 @@ namespace irParser {
 
             let out = `<pre class="code">\n${this.replaceCode(code, replaces)}</pre>\n`;
             if (this.isMarkdown && inlinedFunCode.length) {
-                out += '<blockquote>\n'
-                out += 'Inlined functions: \n'
+                out += '<blockquote>\n';
+                out += 'Inlined functions: \n';
                 for (let i = 0; i < inlinedFunCode.length; i++) {
                     const funCode = inlinedFunCode[i];
                     out += funCode + '\n';
                 }
-                out += '</blockquote>\n'
+                out += '</blockquote>\n';
             }
             return out;
         }
