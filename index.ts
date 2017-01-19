@@ -70,6 +70,11 @@ namespace irParser {
                 program.parseFiles();
                 this.make();
             } else {
+                const file = command[0];
+                if (!file) {
+                    console.error('No input file specified');
+                    return;
+                }
                 childProc.exec(`node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to="${this.codeAsm}" --trace_hydrogen_file="${this.hydrogenCfg}" ${command.join(' ')}`, {
                     maxBuffer: 10 * 1000 * 1000,
                 }, (err: Buffer, stdout: Buffer, stderr: Buffer) => {
