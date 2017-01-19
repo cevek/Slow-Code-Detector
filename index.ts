@@ -50,6 +50,7 @@ namespace irParser {
     class Program {
         files = new Map<string, File>();
         funMap = new Map<string, Fun>();
+        isMarkdown = true;
 
         run() {
             if (command.indexOf('--onlyparse') > -1) {
@@ -75,7 +76,11 @@ namespace irParser {
             this.parseCode(code);
             this.parseIR(s);
             this.parseDidNotInlineReasons(out);
-            this.makeHTML();
+            if (this.isMarkdown) {
+                this.makeMD();
+            } else {
+                this.makeHTML();
+            }
         }
 
         parseIR(s: string) {
@@ -235,7 +240,7 @@ namespace irParser {
         }
 
         makeHTML() {
-            const css = fs.readFileSync('style.css', 'utf8');
+            const css = fs.readFileSync(__dirname + '/style.css', 'utf8');
             let html = `<meta charset="UTF-8"><style>${css}</style><link rel="stylesheet" href="_style.css"><script src="script.js"></script>`;
             for (const [, file] of this.files) {
                 html += `<div class="file-item"><div class="file-name toggle-next">${this.escape(file.fullname)}</div><div class="fn-names">`;
@@ -247,27 +252,72 @@ namespace irParser {
             fs.writeFileSync('ir.html', html);
         }
 
+
+        makeMD() {
+            let out = '';
+            for (const [, file] of this.files) {
+                out += `\n## ${file.fullname}:\n`;
+                for (const [, fun] of file.funMap) {
+                    out += this.funHTML(fun);
+                }
+            }
+            fs.writeFileSync('ir.md', out);
+        }
+
         funHTML(fun: Fun) {
-            let html = `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)}:</a><div class="fn-versions">`;
+            let out = '';
+            if (this.isMarkdown) {
+                if (fun.deopt) {
+                    out += `\n### ⛔ ${fun.name} (deoptimizated):\n`;
+                } else {
+                    out += `\n### ${fun.name}:\n`;
+                }
+            } else {
+                out += `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)}:</a><div class="fn-versions">`;
+            }
             const versions = fun.versions;
             for (let i = 0; i < versions.length; i++) {
                 const version = versions[i];
-                html += `<div class="recompile">`;
-                if (versions.length > 1) {
-                    html += `<span class="recompile-title toggle-next">~recompile~</span>`;
+                if (!this.isMarkdown) {
+                    out += `<div class="recompile">`;
                 }
-                html += `<div class="${versions.length - 1 === i ? '' : 'hidden'}">${this.funIDHTML(versions[versions.length - 1], true)}</div>`;
+                if (versions.length > 1) {
+                    if (!this.isMarkdown) {
+                        out += `<span class="recompile-title toggle-next">~recompile~</span>`;
+                    } else {
+                        out += `<div>~recompile~</div>\n`;
+                    }
+                }
+                if (i + 1 === versions.length) {
+                    if (this.isMarkdown) {
+                        out += this.funIDHTML(versions[versions.length - 1], true);
+                    } else {
+                        out += `<div class="${versions.length - 1 === i ? '' : 'hidden'}">${this.funIDHTML(versions[versions.length - 1], true)}</div>\n`;
+                    }
+                }
                 const deopts = version.deopts;
                 if (deopts.length) {
                     for (let j = 0; j < deopts.length; j++) {
                         const deopt = deopts[j];
-                        html += `<div class="deopt">Deopt: ${this.escape(deopt)}</div>`;
+                        if (this.isMarkdown) {
+                            out += `\n\`\`\`diff\n- Deopt: ${deopt}\n\`\`\`\n`;
+                        } else {
+                            out += `<div class="deopt">Deopt: ${this.escape(deopt)}</div>`;
+                        }
                     }
                 }
-                html += `</div>`;
+                if (!this.isMarkdown) {
+                    out += `</div>\n`;
+                } else {
+                    out += `\n`;
+                }
             }
-            html += `</div></div>`;
-            return html;
+            if (this.isMarkdown) {
+                out += '\n';
+            } else {
+                out += `</div></div>`;
+            }
+            return out;
         }
 
         funIDHTML(funID: FunID, isTopLevel: boolean): string {
@@ -279,16 +329,23 @@ namespace irParser {
                 else if (code[i] === '>') replaces.push({start: i, end: i + 1, text: '&gt;'});
             }
 
+            const inlinedFunCode:string[] = [];
+
             for (let i = 0; i < funID.inlines.length; i++) {
                 const inlineFunID = funID.inlines[i];
                 const pos = inlineFunID.inlinePos;
                 const end = this.findEnd(code, pos);
                 const sub = code.substring(pos, end);
                 const spaces = this.getSpaceSymbolsBeforePrevNewLineOfPos(code, end);
+                let text = `<span class="inline toggle-next" data-title="Show inlined">${sub}</span><span class="inline-code hidden">${this.funIDHTML(inlineFunID, false)}${spaces}</span>`;
+                if (this.isMarkdown) {
+                    inlinedFunCode.push(`<details>\n<summary>${sub}</summary>\n${this.funIDHTML(inlineFunID, false)}\n</details>`);
+                    text = `<b title="Inlined">🔷${sub}</b>`
+                }
                 replaces.push({
                     start: pos,
                     end: end,
-                    text: `<span class="inline toggle-next" data-title="Show inlined">${sub}</span><span class="inline-code hidden">${this.funIDHTML(inlineFunID, false)}${spaces}</span>`
+                    text: text
                 });
             }
 
@@ -300,15 +357,33 @@ namespace irParser {
                 const prefix = '';//runtimeType[runtime.text] || '';
                 const type = (runtime.type === 'InvokeFunction' || runtime.type === 'CallRuntime') ? 'CallWithDescriptor' : runtime.type;
                 let replacedCode = `<span class="runtime ${type}" data-title="${type}">${prefix}${oldCode}</span>`;
+                if (this.isMarkdown) {
+                    replacedCode = (type === 'CallWithDescriptor' ? '🔶' : '⚠') + `️<i><b title="${type}">${oldCode}</b></i>`
+                }
                 if (type === 'CallWithDescriptor') {
                     const linkedFun = this.funMap.get(oldCode);
                     if (linkedFun) {
                         replacedCode = `<a class="runtime ${type}" ${linkedFun.didNotInlineReason ? `did-not-inlined data-title="Did not inline: ${linkedFun.didNotInlineReason}"` : ''} href="#${oldCode}">${oldCode}</a>`;
+                        if (this.isMarkdown) {
+                            replacedCode = `🔶<i><b title="Did not inline: ${linkedFun.didNotInlineReason || 'unknown'}">${oldCode}</b></i>`
+                        }
                     }
                 }
+
                 replaces.push({start: pos, end: end, text: replacedCode});
             }
-            return `<div class="code">${this.replaceCode(code, replaces)}</div>`;
+
+            let out = `<pre class="code">\n${this.replaceCode(code, replaces)}</pre>\n`;
+            if (this.isMarkdown && inlinedFunCode.length) {
+                out += '<blockquote>\n'
+                out += 'Inlined functions: \n'
+                for (let i = 0; i < inlinedFunCode.length; i++) {
+                    const funCode = inlinedFunCode[i];
+                    out += funCode + '\n';
+                }
+                out += '</blockquote>\n'
+            }
+            return out;
         }
 
         getSpaceSymbolsBeforePrevNewLineOfPos(code: string, pos: number) {
