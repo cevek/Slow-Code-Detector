@@ -1,19 +1,19 @@
 {
-  "name": "v8-ir-analyzer",
-  "version": "1.0.0",
+  "name": "slow-code-detector",
+  "version": "1.0.1",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": ""
   },
   "bin": {
-    "v8-ir": "bin/run.js"
+    "scd": "bin/run.js"
   },
-  "repository": "https://github.com/cevek/v8_IR_Analizer",
+  "repository": "https://github.com/cevek/Slow-Code-Detector",
   "keywords": [],
   "author": "cevek",
   "license": "ISC",
-  "dependencies": {
+  "devDependencies": {
     "@types/node": "^7.0.0"
   }
 }
