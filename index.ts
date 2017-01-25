@@ -8,7 +8,6 @@ namespace spd {
     class File {
         fullname: string;
         funMap = new Map<string, Fun>();
-        funIdMap = new Map<number, FunID>();
     }
 
     class Fun {
@@ -51,8 +50,9 @@ namespace spd {
     class Program {
         files = new Map<string, File>();
         funMap = new Map<string, Fun>();
+        funIdMap = new Map<number, FunID>();
         isMarkdown = false;
-        cwd = process.cwd() + '/';
+        cwd = ''//process.cwd() + '/';
         hydrogenCfg = this.cwd + 'hydrogen.cfg';
         codeAsm = this.cwd + 'code.asm';
         outTxt = this.cwd + 'out.txt';
@@ -76,11 +76,16 @@ namespace spd {
                     return;
                 }
                 try {
+                    fs.unlinkSync(this.codeMD);
+                    fs.unlinkSync(this.codeHtml);
+                    fs.unlinkSync(this.outTxt);
                     fs.unlinkSync(this.codeAsm);
                     fs.unlinkSync(this.hydrogenCfg);
                 } catch (e) {}
-                childProc.exec(`node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to="${this.codeAsm}" --trace_hydrogen_file="${this.hydrogenCfg}" ${command.join(' ')}`, {
-                    maxBuffer: 10 * 1000 * 1000,
+                const com = `node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to="${this.codeAsm}" --trace_hydrogen_file="${this.hydrogenCfg}" ${command.join(' ')}`;
+                console.log('start ' + com);
+                childProc.exec(com, {
+                    maxBuffer: 1000 * 1000 * 1000,
                 }, (err: Buffer, stdout: Buffer, stderr: Buffer) => {
                     if (err) {
                         throw err;
@@ -169,6 +174,13 @@ namespace spd {
                     const secondId = +res[4];
                     const code = res[5];
 
+                    let file = this.files.get(filename);
+                    if (!file) {
+                        file = new File();
+                        file.fullname = filename;
+                        this.files.set(filename, file);
+                    }
+
                     if (secondId !== 0) {
                         const funID = new FunID();
                         funID.code = code;
@@ -179,7 +191,7 @@ namespace spd {
                         if (!file) {
                             throw new Error(`No file: ${filename}`);
                         }
-                        const ownerFunId = file.funIdMap.get(id);
+                        const ownerFunId = this.funIdMap.get(id);
                         if (!ownerFunId) {
                             throw new Error(`No ownerFunId: ${id}`);
                         }
@@ -202,13 +214,6 @@ namespace spd {
                         continue;
                     }
 
-                    let file = this.files.get(filename);
-                    if (!file) {
-                        file = new File();
-                        file.fullname = filename;
-                        this.files.set(filename, file);
-                    }
-
                     let fun = file.funMap.get(name);
                     if (!fun) {
                         fun = new Fun();
@@ -228,7 +233,7 @@ namespace spd {
                     funID.name = name;
                     funID.id = id;
                     funID.code = code;
-                    file.funIdMap.set(id, funID);
+                    this.funIdMap.set(id, funID);
 
                     const deoptRegExp = /\[deoptimizing[^:]*: begin [^ ]* (.*?)\]/g;
                     let deoptRes;
@@ -442,7 +447,7 @@ namespace spd {
             return s;
         }
 
-        sortStart(a: { start: number }, b: { start: number }) {
+        sortStart(a: {start: number}, b: {start: number}) {
             return a.start < b.start ? -1 : 1;
         }
 
