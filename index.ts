@@ -3,7 +3,7 @@ const fs = require('fs');
 const command = process.argv.slice(2);
 const path = require('path');
 
-namespace irParser {
+namespace spd {
 
     class File {
         fullname: string;
@@ -56,8 +56,8 @@ namespace irParser {
         hydrogenCfg = this.cwd + 'hydrogen.cfg';
         codeAsm = this.cwd + 'code.asm';
         outTxt = this.cwd + 'out.txt';
-        irHtml = this.cwd + 'ir.html';
-        irMD = this.cwd + 'ir.md';
+        codeHtml = this.cwd + 'code.html';
+        codeMD = this.cwd + 'code.md';
 
         run() {
             let pos: number;
@@ -75,11 +75,22 @@ namespace irParser {
                     console.error('No input file specified');
                     return;
                 }
+                try {
+                    fs.unlinkSync(this.codeAsm);
+                    fs.unlinkSync(this.hydrogenCfg);
+                } catch (e) {}
                 childProc.exec(`node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to="${this.codeAsm}" --trace_hydrogen_file="${this.hydrogenCfg}" ${command.join(' ')}`, {
                     maxBuffer: 10 * 1000 * 1000,
                 }, (err: Buffer, stdout: Buffer, stderr: Buffer) => {
                     if (err) {
                         throw err;
+                    }
+                    try {
+                        fs.accessSync(this.hydrogenCfg);
+                        fs.accessSync(this.codeAsm);
+                    } catch (e) {
+                        console.log('Optimized functions are not found');
+                        return;
                     }
                     const out = stdout.toString() + stderr.toString();
                     fs.writeFileSync(this.outTxt, out);
@@ -107,9 +118,9 @@ namespace irParser {
         }
 
         parseIR(s: string) {
-            const fileIRBlocks = s.split(/^begin_compilation/m);
-            for (let i = 0; i < fileIRBlocks.length; i++) {
-                const IRBlock = fileIRBlocks[i];
+            const fileIRFns = s.split(/^begin_compilation/m);
+            for (let i = 0; i < fileIRFns.length; i++) {
+                const IRBlock = fileIRFns[i];
                 if (IRBlock) {
                     const res = IRBlock.match(/^\s*name "(.*?):(.*?)"\s+method "(.*?):(\d+)"/);
                     const fullname = res[1];
@@ -281,8 +292,8 @@ namespace irParser {
                 }
                 html += `</div></div>`;
             }
-            fs.writeFileSync(this.irHtml, html);
-            console.log('Created ' + path.relative(this.cwd, this.irHtml));
+            fs.writeFileSync(this.codeHtml, html);
+            console.log('Created ' + path.relative(this.cwd, this.codeHtml));
         }
 
 
@@ -294,8 +305,8 @@ namespace irParser {
                     out += this.funHTML(fun);
                 }
             }
-            fs.writeFileSync('ir.md', out);
-            console.log('Created ' + path.relative(this.cwd, this.irMD));
+            fs.writeFileSync(this.codeMD, out);
+            console.log('Created ' + path.relative(this.cwd, this.codeMD));
         }
 
         funHTML(fun: Fun) {
