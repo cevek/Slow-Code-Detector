@@ -76,21 +76,26 @@ namespace spd {
                     console.error('No input file specified');
                     return;
                 }
-                try {
-                    fs.unlinkSync(this.codeMD);
-                    fs.unlinkSync(this.codeHtml);
-                    fs.unlinkSync(this.outTxt);
-                    fs.unlinkSync(this.codeAsm);
-                    fs.unlinkSync(this.hydrogenCfg);
-                } catch (e) {}
-                const com = `node --trace-inlining --trace-hydrogen --trace-phase=Z --trace-deopt --hydrogen-track-positions --redirect-code-traces --redirect-code-traces-to="${this.codeAsm}" --trace_hydrogen_file="${this.hydrogenCfg}" ${command.join(' ')}`;
-                console.log('start ' + com);
-                childProc.exec(com, {
-                    maxBuffer: 1000 * 1000 * 1000,
-                }, (err: Buffer, stdout: Buffer, stderr: Buffer) => {
-                    if (err) {
-                        throw err;
-                    }
+                try {fs.unlinkSync(this.codeMD)} catch (e) {}
+                try {fs.unlinkSync(this.codeHtml)} catch (e) {}
+                try {fs.unlinkSync(this.outTxt)} catch (e) {}
+                try {fs.unlinkSync(this.codeAsm)} catch (e) {}
+                try {fs.unlinkSync(this.hydrogenCfg)} catch (e) {}
+                const com = ['--trace-inlining', '--trace-hydrogen', '--trace-phase=Z', '--trace-deopt', '--hydrogen-track-positions', '--redirect-code-traces', `--redirect-code-traces-to=${this.codeAsm}`, `--trace_hydrogen_file=${this.hydrogenCfg}`, ...command]
+                console.log('node ' + com.join(' '));
+                const proc = childProc.spawn('node', com);
+                let out = '';
+                proc.stdout.pipe(process.stdout);
+                proc.stderr.pipe(process.stderr);
+                proc.stdout.on('data', (data: Buffer) => {
+                    out += data.toString();
+                });
+
+                proc.on('error', (err: any) => {
+                    throw err;
+                })
+
+                proc.on('close', () => {
                     try {
                         fs.accessSync(this.hydrogenCfg);
                         fs.accessSync(this.codeAsm);
@@ -98,7 +103,6 @@ namespace spd {
                         console.log('Optimized functions are not found');
                         return;
                     }
-                    const out = stdout.toString() + stderr.toString();
                     fs.writeFileSync(this.outTxt, out);
                     program.parseFiles();
                     this.make();
