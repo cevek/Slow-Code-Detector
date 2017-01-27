@@ -97,6 +97,10 @@ a.CallWithDescriptor {
     cursor: pointer;
 }
 
+.future-deopt {
+    border-bottom: 2px solid blueviolet;
+}
+
 [data-title]:hover {
     position: relative;
 }

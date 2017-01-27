@@ -34,6 +34,7 @@ namespace spd {
         runtime: Runtime[] = [];
         inlinePos = 0;
         inlineFunSecondIdMap = new Map<number, FunID>();
+        futureDeoptPos: number[] = [];
     }
 
     class Runtime {
@@ -156,6 +157,15 @@ namespace spd {
                             funID.runtime.push({pos: pos1, type: type});
                         }
                     }
+
+                    const deoptBlockRegExp = /(?:BlockEntry  type:Tagged pos:(\d+) <\|@\s+)?\d+ \d+ [\d\w]+ Deoptimize .*? pos:(\d+) /g;
+                    let deoptBlockRes;
+                    while (deoptBlockRes = deoptBlockRegExp.exec(IRBlock)) {
+                        const blockPos = deoptBlockRes[1];
+                        const deoptPos = blockPos ? +blockPos : +deoptBlockRes[2];
+                        funID.futureDeoptPos.push(deoptPos);
+                    }
+
                 }
             }
         }
@@ -391,6 +401,21 @@ namespace spd {
                 if (this.isMarkdown) {
                     inlinedFunCode.push(`<details>\n<summary>${sub}</summary>\n${this.funIDHTML(inlineFunID, false)}\n</details>`);
                     text = `<b title="Inlined">🔷${sub}</b>`;
+                }
+                replaces.push({
+                    start: pos,
+                    end: end,
+                    text: text
+                });
+            }
+
+            for (let i = 0; i < funID.futureDeoptPos.length; i++) {
+                const pos = funID.futureDeoptPos[i];
+                const end = this.findEnd(code, pos);
+                const sub = code.substring(pos, end);
+                let text = `<span class="future-deopt" data-title="Future Deopt">${sub}</span>`;
+                if (this.isMarkdown) {
+                    text = `<b title="Future Deopt">🔴${sub}</b>`;
                 }
                 replaces.push({
                     start: pos,
