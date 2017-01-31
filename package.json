@@ -15,5 +15,8 @@
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^7.0.0"
+  },
+  "dependencies": {
+    "tick": "^0.1.1"
   }
 }

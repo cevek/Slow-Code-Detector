@@ -2,8 +2,22 @@ const childProc = require('child_process');
 const fs = require('fs');
 const command = process.argv.slice(2);
 const path = require('path');
+const processTicks = require('./profiler/prof').processTicks;
+
 
 namespace spd {
+    interface Prof {
+        totalTicks: number;
+        GCTicks: number;
+        nonLibraryTicks: number;
+        result: {
+            filename: string,
+            line: number,
+            col: number,
+            fnName: string,
+            ticks: number
+        }[];
+    }
 
     class File {
         fullname: string;
@@ -16,6 +30,7 @@ namespace spd {
         versions: FunID[] = [];
         versionsIdMap = new Map<number, FunID>();
         didNotInlineReason = '';
+        ticks = 0;
 
         get lastVersion() {
             return this.versions[this.versions.length - 1];
@@ -49,16 +64,18 @@ namespace spd {
     }
 
     class Program {
+        GCTicks = 0;
         files = new Map<string, File>();
         funMap = new Map<string, Fun>();
         funIdMap = new Map<number, FunID>();
         isMarkdown = false;
-        cwd = ''//process.cwd() + '/';
+        cwd = '';//process.cwd() + '/';
         hydrogenCfg = this.cwd + 'hydrogen.cfg';
         codeAsm = this.cwd + 'code.asm';
         outTxt = this.cwd + 'out.txt';
         codeHtml = this.cwd + 'code.html';
         codeMD = this.cwd + 'code.md';
+        v8Log = this.cwd + 'v8.log';
 
         run() {
             let pos: number;
@@ -76,12 +93,13 @@ namespace spd {
                     console.error('No input file specified');
                     return;
                 }
-                try {fs.unlinkSync(this.codeMD)} catch (e) {}
-                try {fs.unlinkSync(this.codeHtml)} catch (e) {}
-                try {fs.unlinkSync(this.outTxt)} catch (e) {}
-                try {fs.unlinkSync(this.codeAsm)} catch (e) {}
-                try {fs.unlinkSync(this.hydrogenCfg)} catch (e) {}
-                const com = ['--trace-inlining', '--trace-hydrogen', '--trace-phase=Z', '--trace-deopt', '--hydrogen-track-positions', '--redirect-code-traces', `--redirect-code-traces-to=${this.codeAsm}`, `--trace_hydrogen_file=${this.hydrogenCfg}`, ...command]
+                try {fs.unlinkSync(this.codeMD);} catch (e) {}
+                try {fs.unlinkSync(this.codeHtml);} catch (e) {}
+                try {fs.unlinkSync(this.outTxt);} catch (e) {}
+                try {fs.unlinkSync(this.codeAsm);} catch (e) {}
+                try {fs.unlinkSync(this.hydrogenCfg);} catch (e) {}
+                try {fs.unlinkSync(this.v8Log);} catch (e) {}
+                const com = ['--trace-inlining', '--prof', '--cpu_profiler_sampling_interval=500', '--logfile=v8.log', '--no-logfile_per_isolate', '--trace-hydrogen', '--trace-phase=Z', '--trace-deopt', '--hydrogen-track-positions', '--redirect-code-traces', `--redirect-code-traces-to=${this.codeAsm}`, `--trace_hydrogen_file=${this.hydrogenCfg}`, ...command];
                 console.log('node ' + com.join(' '));
                 const proc = childProc.spawn('node', com);
                 let out = '';
@@ -93,21 +111,43 @@ namespace spd {
 
                 proc.on('error', (err: any) => {
                     throw err;
-                })
+                });
 
                 proc.on('close', () => {
                     try {
                         fs.accessSync(this.hydrogenCfg);
                         fs.accessSync(this.codeAsm);
+                        fs.accessSync(this.v8Log);
                     } catch (e) {
                         console.log('Optimized functions are not found');
                         return;
                     }
                     fs.writeFileSync(this.outTxt, out);
                     program.parseFiles();
-                    this.make();
+                    processTicks(this.v8Log).then((data: Prof) => {
+                        this.applyProf(data);
+                        this.make();
+                    });
                 });
             }
+        }
+
+        applyProf(prof: Prof) {
+            for (let i = 0; i < prof.result.length; i++) {
+                const res = prof.result[i];
+                const file = this.files.get(res.filename);
+                if (!file) {
+                    console.error('Prof: no file ' + res.filename);
+                    continue
+                }
+                const fun = file.funMap.get(res.fnName);
+                if (!fun) {
+                    console.error('Prof: no fun: ' + res.fnName);
+                    continue
+                }
+                fun.ticks = Math.max(fun.ticks, res.ticks);
+            }
+            this.GCTicks = prof.GCTicks;
         }
 
         parseFiles() {
@@ -304,9 +344,14 @@ namespace spd {
             const css = fs.readFileSync(__dirname + '/style.css', 'utf8');
             const script = fs.readFileSync(__dirname + '/script.js', 'utf8');
             let html = `<meta charset="UTF-8"><style>${css}</style><script>${script}</script></script>`;
+            html += `<div class="file-item"><div class="file-name toggle-next">GC (${this.GCTicks} ticks)</div></div>`;
+
             for (const [, file] of this.files) {
                 html += `<div class="file-item"><div class="file-name toggle-next">${this.escape(file.fullname)}</div><div class="fn-names">`;
-                for (const [, fun] of file.funMap) {
+                const funs =  [...file.funMap.values()];
+                funs.sort((a, b) => a.ticks > b.ticks ? -1 : 1);
+                for (let i = 0; i < funs.length; i++) {
+                    const fun = funs[i];
                     html += this.funHTML(fun);
                 }
                 html += `</div></div>`;
@@ -317,7 +362,7 @@ namespace spd {
 
 
         makeMD() {
-            let out = '';
+            let out = `## GC (${this.GCTicks} ticks)\n\n`;
             for (const [, file] of this.files) {
                 out += `\n## ${file.fullname}:\n`;
                 for (const [, fun] of file.funMap) {
@@ -332,12 +377,12 @@ namespace spd {
             let out = '';
             if (this.isMarkdown) {
                 if (fun.deopt) {
-                    out += `\n### ⛔ ${fun.name} (deoptimizated):\n`;
+                    out += `\n### ⛔ ${fun.name} (${fun.ticks} ticks) (deoptimizated):\n`;
                 } else {
-                    out += `\n### ${fun.name}:\n`;
+                    out += `\n### ${fun.name} (${fun.ticks} ticks):\n`;
                 }
             } else {
-                out += `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)}:</a><div class="fn-versions">`;
+                out += `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)} (${fun.ticks} ticks):</a><div class="fn-versions">`;
             }
             const versions = fun.versions;
             for (let i = 0; i < versions.length; i++) {
@@ -476,7 +521,7 @@ namespace spd {
             return s;
         }
 
-        sortStart(a: {start: number}, b: {start: number}) {
+        sortStart(a: { start: number }, b: { start: number }) {
             return a.start < b.start ? -1 : 1;
         }
 
