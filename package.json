@@ -1,6 +1,6 @@
 {
   "name": "slow-code-detector",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -17,6 +17,7 @@
     "@types/node": "^7.0.0"
   },
   "dependencies": {
+    "esprima": "^4.0.0",
     "tick": "^0.1.1"
   }
 }

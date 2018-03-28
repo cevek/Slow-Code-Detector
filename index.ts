@@ -1,9 +1,10 @@
+import { execSync } from 'child_process';
 const childProc = require('child_process');
 const fs = require('fs');
 const command = process.argv.slice(2);
 const path = require('path');
-const processTicks = require('./profiler/prof').processTicks;
-
+// const processTicks = require('./profiler/prof').processTicks;
+var esprima = require('esprima');
 
 namespace spd {
     interface Prof {
@@ -11,11 +12,11 @@ namespace spd {
         GCTicks: number;
         nonLibraryTicks: number;
         result: {
-            filename: string,
-            line: number,
-            col: number,
-            fnName: string,
-            ticks: number
+            filename: string;
+            line: number;
+            col: number;
+            fnName: string;
+            ticks: number;
         }[];
     }
 
@@ -44,9 +45,12 @@ namespace spd {
         ownerFunId: number;
         name: string;
         code: string;
+        codeTokensRange: [number, number][] = [];
+        fun: Fun;
         inlines: FunID[] = [];
         deopts: string[] = [];
         runtime: Runtime[] = [];
+        start = 0;
         inlinePos = 0;
         inlineFunSecondIdMap = new Map<number, FunID>();
         futureDeoptPos: number[] = [];
@@ -69,8 +73,8 @@ namespace spd {
         funMap = new Map<string, Fun>();
         funIdMap = new Map<number, FunID>();
         isMarkdown = false;
-        cwd = '';//process.cwd() + '/';
-        hydrogenCfg = this.cwd + 'hydrogen.cfg';
+        cwd = process.cwd() + '/';
+        cfg = this.cwd + 'turbo.cfg';
         codeAsm = this.cwd + 'code.asm';
         outTxt = this.cwd + 'out.txt';
         codeHtml = this.cwd + 'code.html';
@@ -93,13 +97,21 @@ namespace spd {
                     console.error('No input file specified');
                     return;
                 }
-                try {fs.unlinkSync(this.codeMD);} catch (e) {}
-                try {fs.unlinkSync(this.codeHtml);} catch (e) {}
-                try {fs.unlinkSync(this.outTxt);} catch (e) {}
-                try {fs.unlinkSync(this.codeAsm);} catch (e) {}
-                try {fs.unlinkSync(this.hydrogenCfg);} catch (e) {}
-                try {fs.unlinkSync(this.v8Log);} catch (e) {}
-                const com = ['--trace-inlining', '--prof', '--cpu_profiler_sampling_interval=500', '--logfile=v8.log', '--no-logfile_per_isolate', '--trace-hydrogen', '--trace-phase=Z', '--trace-deopt', '--hydrogen-track-positions', '--redirect-code-traces', `--redirect-code-traces-to=${this.codeAsm}`, `--trace_hydrogen_file=${this.hydrogenCfg}`, ...command];
+                this.cleanUp();
+                const com = [
+                    '--trace-turbo-inlining',
+                    '--prof',
+                    '--cpu_profiler_sampling_interval=500',
+                    '--logfile=v8.log',
+                    '--no-logfile_per_isolate',
+                    `--trace_turbo_cfg_file=${this.cfg}`,
+                    '--trace-turbo',
+                    '--redirect-code-traces',
+                    '--print_opt_source',
+                    `--redirect-code-traces-to=${this.codeAsm}`,
+                    '--trace-deopt',
+                    ...command,
+                ];
                 console.log('node ' + com.join(' '));
                 const proc = childProc.spawn('node', com);
                 let out = '';
@@ -115,7 +127,7 @@ namespace spd {
 
                 proc.on('close', () => {
                     try {
-                        fs.accessSync(this.hydrogenCfg);
+                        fs.accessSync(this.cfg);
                         fs.accessSync(this.codeAsm);
                         fs.accessSync(this.v8Log);
                     } catch (e) {
@@ -124,12 +136,36 @@ namespace spd {
                     }
                     fs.writeFileSync(this.outTxt, out);
                     program.parseFiles();
-                    processTicks(this.v8Log).then((data: Prof) => {
-                        this.applyProf(data);
-                        this.make();
-                    });
+                    // processTicks(this.v8Log).then((data: Prof) => {
+                    //     this.applyProf(data);
+                    //     this.make();
+                    // });
+                    this.cleanUp();
+                    this.make();
                 });
             }
+        }
+
+        cleanUp() {
+            try {
+                fs.unlinkSync(this.codeMD);
+            } catch (e) {}
+            try {
+                fs.unlinkSync(this.codeHtml);
+            } catch (e) {}
+            try {
+                fs.unlinkSync(this.outTxt);
+            } catch (e) {}
+            try {
+                fs.unlinkSync(this.codeAsm);
+            } catch (e) {}
+            try {
+                fs.unlinkSync(this.cfg);
+            } catch (e) {}
+            try {
+                fs.unlinkSync(this.v8Log);
+            } catch (e) {}
+            execSync('rm -rf ' + this.cwd + 'turbo-*');
         }
 
         applyProf(prof: Prof) {
@@ -138,12 +174,12 @@ namespace spd {
                 const file = this.files.get(res.filename);
                 if (!file) {
                     console.error('Prof: no file ' + res.filename);
-                    continue
+                    continue;
                 }
                 const fun = file.funMap.get(res.fnName);
                 if (!fun) {
                     console.error('Prof: no fun: ' + res.fnName);
-                    continue
+                    continue;
                 }
                 fun.ticks = Math.max(fun.ticks, res.ticks);
             }
@@ -155,7 +191,7 @@ namespace spd {
             let code: string;
             let out: string;
             try {
-                s = fs.readFileSync(this.hydrogenCfg, 'utf8');
+                s = fs.readFileSync(this.cfg, 'utf8');
                 code = fs.readFileSync(this.codeAsm, 'utf8');
                 out = fs.readFileSync(this.outTxt, 'utf8');
             } catch (e) {
@@ -168,65 +204,73 @@ namespace spd {
         }
 
         parseIR(s: string) {
+            // console.log('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ parseIR');
             const fileIRFns = s.split(/^begin_compilation/m);
             for (let i = 0; i < fileIRFns.length; i++) {
                 const IRBlock = fileIRFns[i];
                 if (IRBlock) {
-                    const res = IRBlock.match(/^\s*name "(.*?):(.*?)"\s+method "(.*?):(\d+)"/);
-                    const fullname = res[1];
-                    const name = res[3];
-                    const id = +res[4];
-                    const file = this.files.get(fullname);
-                    if (!file) {
-                        throw new Error('No File: ' + fullname);
-                    }
-                    const fun = file.funMap.get(name);
-                    if (!fun) {
+                    const res = IRBlock.match(/^\s*name "(.*?)"\s+method "(.*?):(\d+)"/);
+                    // const fullname = res[1];
+                    const name = res[2];
+                    const id = +res[3];
+                    // const file = this.files.get(fullname);
+                    // if (!file) {
+                    //     throw new Error('No File: ' + fullname);
+                    // }
+                    const funId = this.funIdMap.get(id);
+                    if (!funId) {
                         throw new Error('No fun: ' + name);
                     }
+                    const fun = funId.fun;
                     const funID = fun.versionsIdMap.get(id);
                     if (!funID) {
                         throw new Error('No funID: ' + id);
                     }
-                    const changesRegExp = /^\s+\d \d \w\d+ (\w+).*? changes\[\*\][^\n]* pos:(\d+)(?:_(\d+))? /mg;
+                    //      0 2 n117 Call[Code:StoreWithVector Descriptor:r1s0i7f1t0]   n221 n8 n217 n290 n220 n218 n102 n118 Eff: n287 Ctrl: n287  pos:inlining(1),104 <|@
+                    const changesRegExp = /^\s+\d \d \w\d+ Call\[Code:(.*?)[: ][^\n]* pos:(?:inlining\((\d+)\),)?(\d+)/gm;
                     let changesRes;
-                    while (changesRes = changesRegExp.exec(IRBlock)) {
+                    while ((changesRes = changesRegExp.exec(IRBlock))) {
+                        // console.log(changesRes[1], changesRes[2]);
                         const type = changesRes[1];
-                        const pos1 = +changesRes[2];
+                        if (type === 'StackGuard') continue;
+                        const pos1 = changesRes[2] === undefined ? undefined : +changesRes[2];
                         const pos2 = +changesRes[3];
-                        if (pos2) {
+                        if (pos1 !== undefined) {
                             const inlineFunID = funID.inlineFunSecondIdMap.get(pos1);
-                            inlineFunID.runtime.push({pos: pos2, type: type});
+                            inlineFunID.runtime.push({ pos: pos2, type: type });
                         } else {
-                            funID.runtime.push({pos: pos1, type: type});
+                            funID.runtime.push({ pos: pos2, type: type });
                         }
                     }
 
                     const deoptBlockRegExp = /(?:BlockEntry  type:Tagged pos:(\d+) <\|@\s+)?\d+ \d+ [\d\w]+ Deoptimize .*? pos:(\d+) /g;
                     let deoptBlockRes;
-                    while (deoptBlockRes = deoptBlockRegExp.exec(IRBlock)) {
+                    while ((deoptBlockRes = deoptBlockRegExp.exec(IRBlock))) {
                         const blockPos = deoptBlockRes[1];
                         const deoptPos = blockPos ? +blockPos : +deoptBlockRes[2];
                         funID.futureDeoptPos.push(deoptPos);
                     }
-
                 }
             }
         }
 
-
         parseCode(s: string) {
+            // console.log('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ parseCode');
             const fns = s.split('--- FUNCTION SOURCE ');
+            // const fns = s.split('--- FUNCTION SOURCE ');
             for (let i = 0; i < fns.length; i++) {
                 const funBlock = fns[i];
                 if (funBlock) {
-                    const fnRegExp = /^\s*\((.*?):(.*?)\) id\{(\d+),(\d+)\} ---\n([\s|\S]*)\n--- END ---/;
+                    const fnRegExp = /\((.*?):(.*?)\) id\{(\d+),(-?\d+)\} start{(\d+)} ---\n([\s|\S]*)\n--- END ---/;
                     const res = funBlock.match(fnRegExp);
+                    if (!res) continue;
+                    // console.log('***************', res);
                     const filename = res[1];
                     const name = res[2];
                     const id = +res[3];
                     const secondId = +res[4];
-                    const code = res[5];
+                    const start = +res[5];
+                    const code = res[6];
 
                     let file = this.files.get(filename);
                     if (!file) {
@@ -235,11 +279,16 @@ namespace spd {
                         this.files.set(filename, file);
                     }
 
-                    if (secondId !== 0) {
+                    const tokens = esprima
+                        .tokenize('function' + code, { range: true })
+                        .map((token: any) => [token.range[0] - 8, token.range[1] - 8]);
+                    if (secondId !== -1) {
                         const funID = new FunID();
                         funID.code = code;
                         funID.ownerFunId = id;
                         funID.name = name;
+                        funID.start = start;
+                        funID.codeTokensRange = tokens;
 
                         const file = this.files.get(filename);
                         if (!file) {
@@ -252,14 +301,17 @@ namespace spd {
                         ownerFunId.inlineFunSecondIdMap.set(secondId, funID);
                         funID.file = ownerFunId.file;
 
-                        const inlineRes = funBlock.match(/INLINE \(.*?\) id\{\d+,\d+\} AS (\d+) AT <(\d+):(\d+)>/);
+                        const inlineRes = funBlock.match(/INLINE \(.*?\) id{\d+,-?\d+} AS (\d+) AT <(-?\d+):(\d+)>/);
                         if (inlineRes) {
                             const name = inlineRes[0];
                             const secondId = +inlineRes[1];
                             const parentSecondId = +inlineRes[2];
                             const inlinePos = +inlineRes[3];
                             funID.inlinePos = inlinePos;
-                            const parentFunId = parentSecondId === 0 ? ownerFunId : ownerFunId.inlineFunSecondIdMap.get(parentSecondId);
+                            const parentFunId =
+                                parentSecondId === -1
+                                    ? ownerFunId
+                                    : ownerFunId.inlineFunSecondIdMap.get(parentSecondId);
                             if (!parentFunId) {
                                 throw new Error('No parentFunId: ' + parentSecondId);
                             }
@@ -287,11 +339,14 @@ namespace spd {
                     funID.name = name;
                     funID.id = id;
                     funID.code = code;
+                    funID.fun = fun;
+                    funID.start = start;
+                    funID.codeTokensRange = tokens;
                     this.funIdMap.set(id, funID);
 
                     const deoptRegExp = /\[deoptimizing[^:]*: begin [^ ]* (.*?)\]/g;
                     let deoptRes;
-                    while (deoptRes = deoptRegExp.exec(funBlock)) {
+                    while ((deoptRes = deoptRegExp.exec(funBlock))) {
                         funID.deopts.push(deoptRes[1]);
                     }
                     if (funID.deopts.length) {
@@ -311,7 +366,7 @@ namespace spd {
             //(target not inlineable).
             //(target is recursive).
             let res;
-            while (res = regexp.exec(s)) {
+            while ((res = regexp.exec(s))) {
                 const name = res[1];
                 const calledFrom = res[2];
                 const reason = res[3];
@@ -327,9 +382,7 @@ namespace spd {
         }
 
         escape(str: string) {
-            return str
-                .replace(/>/g, '&gt;')
-                .replace(/</g, '&lt;');
+            return str.replace(/>/g, '&gt;').replace(/</g, '&lt;');
         }
 
         make() {
@@ -344,12 +397,14 @@ namespace spd {
             const css = fs.readFileSync(__dirname + '/style.css', 'utf8');
             const script = fs.readFileSync(__dirname + '/script.js', 'utf8');
             let html = `<meta charset="UTF-8"><style>${css}</style><script>${script}</script></script>`;
-            html += `<div class="file-item"><div class="file-name toggle-next">GC (${this.GCTicks} ticks)</div></div>`;
+            // html += `<div class="file-item"><div class="file-name toggle-next">GC (${this.GCTicks} ticks)</div></div>`;
 
             for (const [, file] of this.files) {
-                html += `<div class="file-item"><div class="file-name toggle-next">${this.escape(file.fullname)}</div><div class="fn-names">`;
-                const funs =  [...file.funMap.values()];
-                funs.sort((a, b) => a.ticks > b.ticks ? -1 : 1);
+                html += `<div class="file-item"><div class="file-name toggle-next">${this.escape(
+                    file.fullname
+                )}</div><div class="fn-names">`;
+                const funs = [...file.funMap.values()];
+                funs.sort((a, b) => (a.ticks > b.ticks ? -1 : 1));
                 for (let i = 0; i < funs.length; i++) {
                     const fun = funs[i];
                     html += this.funHTML(fun);
@@ -359,7 +414,6 @@ namespace spd {
             fs.writeFileSync(this.codeHtml, html);
             console.log('Created ' + path.relative(this.cwd, this.codeHtml));
         }
-
 
         makeMD() {
             let out = `## GC (${this.GCTicks} ticks)\n\n`;
@@ -382,7 +436,9 @@ namespace spd {
                     out += `\n### ${fun.name} (${fun.ticks} ticks):\n`;
                 }
             } else {
-                out += `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(fun.name)}" id="${this.escape(fun.name)}">${this.escape(fun.name)} (${fun.ticks} ticks):</a><div class="fn-versions">`;
+                out += `<div class="fn-item ${fun.deopt ? 'fn-deopt' : ''}"><a class="fn-name" href="#${this.escape(
+                    fun.name
+                )}" id="${this.escape(fun.name)}">${this.escape(fun.name)}:</a><div class="fn-versions">`;
             }
             const versions = fun.versions;
             for (let i = 0; i < versions.length; i++) {
@@ -401,7 +457,10 @@ namespace spd {
                     if (this.isMarkdown) {
                         out += this.funIDHTML(versions[versions.length - 1], true);
                     } else {
-                        out += `<div class="${versions.length - 1 === i ? '' : 'hidden'}">${this.funIDHTML(versions[versions.length - 1], true)}</div>\n`;
+                        out += `<div class="${versions.length - 1 === i ? '' : 'hidden'}">${this.funIDHTML(
+                            versions[versions.length - 1],
+                            true
+                        )}</div>\n`;
                     }
                 }
                 const deopts = version.deopts;
@@ -434,33 +493,38 @@ namespace spd {
             const code = funID.code;
 
             for (let i = 0; i < code.length; i++) {
-                if (code[i] === '<') replaces.push({start: i, end: i + 1, text: '&lt;'});
-                else if (code[i] === '>') replaces.push({start: i, end: i + 1, text: '&gt;'});
+                if (code[i] === '<') replaces.push({ start: i, end: i + 1, text: '&lt;' });
+                else if (code[i] === '>') replaces.push({ start: i, end: i + 1, text: '&gt;' });
             }
 
             const inlinedFunCode: string[] = [];
 
             for (let i = 0; i < funID.inlines.length; i++) {
                 const inlineFunID = funID.inlines[i];
-                const pos = inlineFunID.inlinePos;
-                const end = this.findEnd(code, pos);
+                const pos = inlineFunID.inlinePos - funID.start;
+                const end = findEndRange(pos, funID.codeTokensRange);
                 const sub = code.substring(pos, end);
                 const spaces = this.getSpaceSymbolsBeforePrevNewLineOfPos(code, end);
-                let text = `<span class="inline toggle-next" data-title="Show inlined">${sub}</span><span class="inline-code hidden">${this.funIDHTML(inlineFunID, false)}${spaces}</span>`;
+                let text = `<span class="inline toggle-next" data-title="Show inlined">${sub}</span><span class="inline-code hidden">${this.funIDHTML(
+                    inlineFunID,
+                    false
+                )}${spaces}</span>`;
                 if (this.isMarkdown) {
-                    inlinedFunCode.push(`<details>\n<summary>${sub}</summary>\n${this.funIDHTML(inlineFunID, false)}\n</details>`);
+                    inlinedFunCode.push(
+                        `<details>\n<summary>${sub}</summary>\n${this.funIDHTML(inlineFunID, false)}\n</details>`
+                    );
                     text = `<b title="Inlined">🔷${sub}</b>`;
                 }
                 replaces.push({
                     start: pos,
                     end: end,
-                    text: text
+                    text: text,
                 });
             }
 
             for (let i = 0; i < funID.futureDeoptPos.length; i++) {
                 const pos = funID.futureDeoptPos[i];
-                const end = this.findEnd(code, pos);
+                const end = findEndRange(pos, funID.codeTokensRange);
                 const sub = code.substring(pos, end);
                 let text = `<span class="future-deopt" data-title="Future Deopt">${sub}</span>`;
                 if (this.isMarkdown) {
@@ -469,32 +533,42 @@ namespace spd {
                 replaces.push({
                     start: pos,
                     end: end,
-                    text: text
+                    text: text,
                 });
             }
 
             for (let i = 0; i < funID.runtime.length; i++) {
                 const runtime = funID.runtime[i];
-                const pos = runtime.pos;
-                const end = this.findEnd(code, pos);
-                let oldCode = (code.substring(pos, end));
-                const prefix = '';//runtimeType[runtime.text] || '';
-                const type = (runtime.type === 'InvokeFunction' || runtime.type === 'CallRuntime') ? 'CallWithDescriptor' : runtime.type;
+                const pos = runtime.pos - funID.start;
+                // console.log(runtime.pos, funID.start);
+                const end = findEndRange(pos, funID.codeTokensRange);
+                let oldCode = code.substring(pos, end);
+                const prefix = ''; //runtimeType[runtime.text] || '';
+                const type =
+                    runtime.type === 'InvokeFunction' || runtime.type === 'CallRuntime'
+                        ? 'CallWithDescriptor'
+                        : runtime.type;
                 let replacedCode = `<span class="runtime ${type}" data-title="${type}">${prefix}${oldCode}</span>`;
                 if (this.isMarkdown) {
-                    replacedCode = (type === 'CallWithDescriptor' ? '🔶' : '⚠') + `️<i><b title="${type}">${oldCode}</b></i>`;
+                    replacedCode =
+                        (type === 'CallWithDescriptor' ? '🔶' : '⚠') + `️<i><b title="${type}">${oldCode}</b></i>`;
                 }
                 if (type === 'CallWithDescriptor') {
                     const linkedFun = this.funMap.get(oldCode);
                     if (linkedFun) {
-                        replacedCode = `<a class="runtime ${type}" ${linkedFun.didNotInlineReason ? `did-not-inlined data-title="Did not inline: ${linkedFun.didNotInlineReason}"` : ''} href="#${oldCode}">${oldCode}</a>`;
+                        replacedCode = `<a class="runtime ${type}" ${
+                            linkedFun.didNotInlineReason
+                                ? `did-not-inlined data-title="Did not inline: ${linkedFun.didNotInlineReason}"`
+                                : ''
+                        } href="#${oldCode}">${oldCode}</a>`;
                         if (this.isMarkdown) {
-                            replacedCode = `🔶<i><b title="Did not inline: ${linkedFun.didNotInlineReason || 'unknown'}">${oldCode}</b></i>`;
+                            replacedCode = `🔶<i><b title="Did not inline: ${linkedFun.didNotInlineReason ||
+                                'unknown'}">${oldCode}</b></i>`;
                         }
                     }
                 }
 
-                replaces.push({start: pos, end: end, text: replacedCode});
+                replaces.push({ start: pos, end: end, text: replacedCode });
             }
 
             let out = `<pre class="code">\n${this.replaceCode(code, replaces)}</pre>\n`;
@@ -525,7 +599,6 @@ namespace spd {
             return a.start < b.start ? -1 : 1;
         }
 
-
         replaceCode(code: string, replaces: Replace[]) {
             replaces.sort(this.sortStart);
             let shift = 0;
@@ -545,18 +618,30 @@ namespace spd {
             }
             return code;
         }
-
-        findEnd(code: string, start: number) {
-            new RegExp(`(.|\n){${start}}(\w+)`);
-            const sub = code.substr(start, 100);
-            const m = sub.match(/^(new |[.=[ !&<>\^%+\-|]*)?[\w\d_]+]?/);
-            if (m) {
-                return start + m[0].length;
-            }
-            return start + 5;
-        }
+        //
+        // findEnd(code: string, start: number) {
+        //     new RegExp(`(.|\n){${start}}(\w+)`);
+        //     const sub = code.substr(start, 100);
+        //     const m = sub.match(/^(new |[.=[ !&<>\^%+\-|]*)?[\w\d_]+]?/);
+        //     if (m) {
+        //         return start + m[0].length;
+        //     }
+        //     return start + 5;
+        // }
     }
 
     const program = new Program();
     program.run();
+}
+
+function findEndRange(from: number, ranges: [number, number][]) {
+    from += 1;
+    for (let i = 0; i < ranges.length; i++) {
+        const [start, end] = ranges[i];
+        if (end < from) continue;
+        if (start <= from) {
+            return end;
+        }
+    }
+    return undefined;
 }
